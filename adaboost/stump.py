@@ -65,7 +65,7 @@ class Stump:
         best_info_gain = None
 
         feature_split_idx = 0
-        for split_val in split_vals:
+        for split_idx, split_val in enumerate(split_vals):
 
             #update feature split idx
             while sorted_features[feature_split_idx] <= split_val:
@@ -89,8 +89,7 @@ class Stump:
             #update best stump params
             if best_info_gain is None or info_gain > best_info_gain:
                 best_info_gain = info_gain
-                best_split_idx = feature_split_idx
-
+                best_split_idx = split_idx
 
         #return split with best gain
         #NOTE: scipy mode returns a "mode result" so you need to index in and flatten
@@ -116,9 +115,9 @@ class Stump:
         entropy_le = self._get_weighted_entropy(le_child, le_weight)
         entropy_g = self._get_weighted_entropy(g_child, g_weight)
 
-        conditional_entropy = -1 * w_le * entropy_le + w_g * entropy_g
+        conditional_entropy = w_le * entropy_le + w_g * entropy_g
 
-        return parent_entropy + conditional_entropy
+        return parent_entropy - conditional_entropy
 
 
     def _get_weighted_entropy(self, X, w):
