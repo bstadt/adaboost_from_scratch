@@ -1,17 +1,19 @@
 import numpy as np
+np.seterr(all='raise')
 from scipy.stats import mode
 
+#I <3 column vectors
 def columnize(x):
     return np.array(x).reshape((-1, 1))
 
 class Stump:
 
     def __init__(self,
-                 dimselect_method='random',
+                 dimselect_method='all',
                  splitselect_method='all'):
 
         #ensure a valid dimselect_method is selected
-        self._dimselect_methods = {'random': self._dimselect_random}
+        self._dimselect_methods = {'all': self._dimselect_all}
         if dimselect_method not in self._dimselect_methods.keys():
             raise NotImplementedError('dimselect_method must be in: '+str(self._dimselect_methods.keys()))
         self._dimselect_method = self._dimselect_methods[dimselect_method]
@@ -30,113 +32,141 @@ class Stump:
         return
 
 
-    def _dimselect_random(self, X):
-        return np.random.randint(0, X.shape[1])
+    def _dimselect_all(self, X):
+        return list(range(X.shape[1]))
 
 
-    def _splitselect_all(self, features, Y):
-        #get all possible split values
-        feature_min = np.min(features)
-        feature_max = np.max(features)
-        splits = np.unique(features)
+    def _splitselect_all(self, features, Y, weights):
 
         #get parent entropy
-        parent_entropy = self._get_entropy(Y)
+        parent_entropy = self._get_weighted_entropy(Y, weights)
 
-        #minus 2 since we dont consider min and max
-        info_gains = [0. for _ in splits]
+        #sort features, weights, labels
+        sorted_args = np.argsort(features.flatten())
+        sorted_features = columnize(features.flatten()[sorted_args])
+        sorted_weights = columnize(weights.flatten()[sorted_args])
+        sorted_Y = columnize(Y.flatten()[sorted_args])
 
-        #calculate info gain for all splits
-        for i, split in enumerate(splits):
+        #precalculate splits
+        n = sorted_Y.shape[0]
+        split_vals = np.unique([np.mean(sorted_features[i-1:i+1])\
+                                for i in range(1, n)])
+        split_vals = sorted(split_vals)
 
-            #no information gain in min or max split
-            if np.allclose(split, feature_min) or np.allclose(split, feature_max):
-                info_gains[i] = 0.
+        #dont want to split on the first or lats values
+        if split_vals[-1] == sorted_features[-1]:
+            split_vals = split_vals[:-1]
 
-            #get class splits
-            less_eq_Y = columnize([y\
-                                  for i, y in enumerate(Y)\
-                                  if features[i] <= split])
+        if split_vals[0] == sorted_features[0]:
+            split_vals = split_vals[1:]
 
-            greater_Y = columnize([y\
-                                   for i, y in enumerate(Y)\
-                                   if features[i] > split])
+        #calculate weighted info gain for all splits
+        best_split_idx = None
+        best_info_gain = None
+
+        feature_split_idx = 0
+        for split_val in split_vals:
+
+            #update feature split idx
+            while sorted_features[feature_split_idx] <= split_val:
+                feature_split_idx +=1
+
+            #get class split
+            less_eq_Y = sorted_Y[:feature_split_idx]
+            greater_Y = sorted_Y[feature_split_idx:]
+
+            #get weight split
+            less_eq_w = sorted_weights[:feature_split_idx]
+            greater_w = sorted_weights[feature_split_idx:]
 
             #calculate information gain:
-            gain = self._get_info_gain(parent_entropy,
-                                       less_eq_Y,
-                                       greater_Y)
-            info_gains[i] = gain
+            info_gain = self._get_weighted_info_gain(parent_entropy,
+                                                     less_eq_Y,
+                                                     less_eq_w,
+                                                     greater_Y,
+                                                     greater_w)
+
+            #update best stump params
+            if best_info_gain is None or info_gain > best_info_gain:
+                best_info_gain = info_gain
+                best_split_idx = feature_split_idx
+
 
         #return split with best gain
-        argmax_gain = np.argmax(info_gains)
-        split = splits[argmax_gain]
+        #NOTE: scipy mode returns a "mode result" so you need to index in and flatten
+        less_eq_class = mode(Y[:feature_split_idx])[0].flatten()
+        greater_class = mode(Y[feature_split_idx:])[0].flatten()
 
-        #get class probabilities at this split
-        #TODO: would it be faster to save splits?
-        #NOTE: scipy mode returnes "mode result", so have to index and flatten
-        less_eq_class = mode([y\
-                              for i, y in enumerate(Y)\
-                              if features[i] <= split])[0].flatten()
+        split = split_vals[best_split_idx]
 
-        greater_class = mode([y\
-                              for i, y in enumerate(Y)\
-                              if features[i] > split])[0].flatten()
+        return split, less_eq_class, greater_class, best_info_gain
 
 
-        return split, less_eq_class, greater_class
+    def _get_weighted_info_gain(self,
+                                parent_entropy,
+                                le_child,
+                                le_weight,
+                                g_child,
+                                g_weight):
 
+        #get split weights
+        w_le = np.sum(le_weight)
+        w_g = np.sum(g_weight)
 
-    def _get_info_gain(self,
-                       parent_entropy,
-                       le_child,
-                       g_child):
+        entropy_le = self._get_weighted_entropy(le_child, le_weight)
+        entropy_g = self._get_weighted_entropy(g_child, g_weight)
 
-        #get split probabilities
-        n_le_child = le_child.shape[0]
-        n_g_child = g_child.shape[0]
-        n = n_le_child + n_g_child
-
-        p_le = n_le_child/n
-        p_g = n_g_child/n
-
-        entropy_le = self._get_entropy(le_child)
-        entropy_g = self._get_entropy(g_child)
-
-        conditional_entropy = -1 * p_le * entropy_le + p_g * entropy_g
+        conditional_entropy = -1 * w_le * entropy_le + w_g * entropy_g
 
         return parent_entropy + conditional_entropy
 
 
-    def _get_entropy(self, X):
+    def _get_weighted_entropy(self, X, w):
 
         entropy = 0
+        w_tot = np.sum(w)
 
         for k in np.unique(X):
-            n = X.shape[0]
-            p_k = np.sum(X == k)/n
-            class_entropy = p_k * np.log(p_k)
+            locs = np.where(X == k)
+            w_k = np.sum(w[locs])/w_tot
+            class_entropy = w_k * np.log(w_k)
             entropy -= class_entropy
 
         return entropy
 
 
-    def fit(self, X, Y):
+    def fit(self, X, Y, weights):
 
         #select a dimension
-        k = self._dimselect_method(X)
+        dims = self._dimselect_method(X)
 
-        #get features
-        features = X[:,k]
+        #within all selected dimensions, find best split
+        best_k = None
+        best_gain = None
+        best_split = None
+        bset_less_eq_class = None
+        best_greater_class = None
 
-        #get split
-        split, less_eq_class, greater_class = self._splitselect_method(features, Y)
+        for k in dims:
+            #get features
+            features = X[:,k]
+
+            #get split
+            split, less_eq_class, greater_class, info_gain = self._splitselect_method(features, Y, weights)
+
+            #save best results
+            if best_gain is None or info_gain > best_gain:
+                best_gain = info_gain
+                best_k = k
+                best_split = split
+                best_less_eq_class = less_eq_class
+                best_greater_class = greater_class
 
         #save decision params
-        self._k = k
-        self._split = split
-        self._less_eq_class = less_eq_class
-        self._greater_class = greater_class
+        self._k = best_k
+        self._split = best_split
+        self._less_eq_class = best_less_eq_class
+        self._greater_class = best_greater_class
         return
 
 
@@ -157,19 +187,3 @@ class Stump:
                 predictions[i] = greater_class
 
         return columnize(predictions)
-
-
-    def split(self, X):
-        split = self._split
-        features = X[:, self._k]
-
-        #split examples
-        less_eq = [X[i]\
-                   for i in X.shape[0]\
-                   if features[i] <= split]
-
-        greater = [X[i]\
-                   for i in X.shape[0]\
-                   if features[i] > split]
-
-        return np.stack(less_eq), np.stack(greater)
