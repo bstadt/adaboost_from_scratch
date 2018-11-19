@@ -32,6 +32,15 @@ class Stump:
         return
 
 
+    def _max_weight_class(self, classes, weights):
+        class_weights = {cur_class:0 for cur_class in np.unique(classes)}
+        for i, cur_class in enumerate(classes.flatten()):
+            class_weights[cur_class] += weights[i]
+
+        max_weight_class = max(class_weights, key=class_weights.get)
+        return max_weight_class
+
+
     def _dimselect_all(self, X):
         return list(range(X.shape[1]))
 
@@ -93,8 +102,13 @@ class Stump:
 
         #return split with best gain
         #NOTE: scipy mode returns a "mode result" so you need to index in and flatten
-        less_eq_class = mode(Y[:feature_split_idx])[0].flatten()
-        greater_class = mode(Y[feature_split_idx:])[0].flatten()
+        #Make this max weight class?
+        #less_eq_class = mode(Y[:feature_split_idx])[0].flatten()
+        #greater_class = mode(Y[feature_split_idx:])[0].flatten()
+        less_eq_class = self._max_weight_class(sorted_Y[:feature_split_idx],
+                                               sorted_weights[:feature_split_idx])
+        greater_class = self._max_weight_class(sorted_Y[feature_split_idx:],
+                                               sorted_weights[feature_split_idx:])
 
         split = split_vals[best_split_idx]
 

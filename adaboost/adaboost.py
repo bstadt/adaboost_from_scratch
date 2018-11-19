@@ -27,6 +27,8 @@ class AdaBoost:
 
     def fit(self, X, Y, stumps = 100):
 
+        num_classes = np.unique(Y).shape[0]
+
         #uniformly initialize weights
         data_weights = [1/X.shape[0]\
                        for _ in range(X.shape[0])]
@@ -41,7 +43,7 @@ class AdaBoost:
 
             #update stump weights
             error = np.sum(data_weights[np.where(Y_hat != Y)])
-            stump_weight = np.log((1 - error)/error)
+            stump_weight = np.log((1 - error)/error) + np.log(num_classes - 1)
             self._stump_weights.append(stump_weight)
 
             #get new data weights
